@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 
 	"golang.org/x/text/encoding/charmap"
 )
@@ -19,6 +21,9 @@ import (
 var (
 	ErrAttribute = errors.New("attribute is not a 4-bit color value")
 	ErrReader    = errors.New("reader is nil")
+	//nolint:gochecknoglobals
+	dumpTemplate = template.Must(template.New("dump").Parse(
+		`{{define "T"}}<div>{{ . }}</div>{{end}}`))
 )
 
 // Palette sets the 4-bit (0-15) color codes to a colorset of RGB values.
@@ -111,8 +116,10 @@ type Decoder struct {
 	row         int
 	maxRows     int
 	buffer      []template.HTML
-	currentLine template.HTML
 	currentAttr byte
+	fgStyles    [16]string // Pre-cached FG CSS strings
+	bgStyles    [16]string // Pre-cached BG CSS strings
+	lineBuilder *strings.Builder
 }
 
 // NewDecoder creates a Decoder with a given width (columns). If width <= 0, 160 is used.
@@ -131,15 +138,20 @@ func NewDecoder(width, maxRows int, pal Palette, charset *charmap.Charmap) *Deco
 		charset = charmap.CodePage437
 	}
 	d := &Decoder{
-		charset: charset,
-		columns: width,
-		column:  1,
-		row:     1,
-		maxRows: 0,
+		charset:     charset,
+		columns:     width,
+		column:      1,
+		row:         1,
+		maxRows:     0,
+		lineBuilder: &strings.Builder{},
 	}
+	// Pre-allocate buffer for typical screen sizes (25-30 rows)
+	bufferCapacity := 25
 	if maxRows > 0 {
 		d.maxRows = maxRows
+		bufferCapacity = maxRows
 	}
+	d.buffer = make([]template.HTML, 0, bufferCapacity)
 	switch pal {
 	case StandardCGA:
 		d.colors = CGA()
@@ -147,6 +159,11 @@ func NewDecoder(width, maxRows int, pal Palette, charset *charmap.Charmap) *Deco
 		d.colors = CGARevised()
 	default:
 		d.colors = CGA()
+	}
+	// Pre-cache CSS style strings
+	for i := range 16 {
+		d.fgStyles[i] = d.colors[i].FG()
+		d.bgStyles[i] = d.colors[i].BG()
 	}
 	return d
 }
@@ -172,7 +189,7 @@ func Buffer(r io.Reader, width, maxRows int, pal Palette, charset *charmap.Charm
 		return nil, err
 	}
 	if err := out.Flush(); err != nil {
-		return nil, fmt.Errorf("buffer out flash: %w", err)
+		return nil, fmt.Errorf("buffer out flush: %w", err)
 	}
 	return &b, nil
 }
@@ -219,16 +236,13 @@ func (d *Decoder) Write(wr io.Writer) error {
 	if wr == nil {
 		wr = io.Discard
 	}
-	t, err := template.New("dump").Parse(
-		`{{define "T"}}<div>{{ . }}</div>{{end}}`)
-	if err != nil {
-		return fmt.Errorf("write template parse: %w", err)
-	}
-	var data template.HTML
+	var sb strings.Builder
 	for s := range slices.Values(d.buffer) {
-		data += s
+		sb.WriteString(string(s))
 	}
-	if err := t.ExecuteTemplate(wr, "T", data); err != nil {
+	//nolint:gosec
+	data := template.HTML(sb.String())
+	if err := dumpTemplate.ExecuteTemplate(wr, "T", data); err != nil {
 		return fmt.Errorf("write template execute: %w", err)
 	}
 	return nil
@@ -300,25 +314,31 @@ func (d *Decoder) endOfRow() bool {
 	return n > 0 && n%d.columns == 0
 }
 
-//nolint:gosec
 func (d *Decoder) writeChar(b, atr byte) error {
 	const msg = "data is not a video binary dump"
 	fg, bg := decodeAttr(atr)
 	const lastColor = 15
 	if fg > lastColor {
-		return fmt.Errorf("%s %X foreground color, %d > 15: %w", msg, bg, bg, ErrAttribute)
+		return fmt.Errorf("%s %X foreground color, %d > 15: %w", msg, fg, fg, ErrAttribute)
 	}
 	if bg > lastColor {
 		return fmt.Errorf("%s %X background color, %d > 15: %w", msg, bg, bg, ErrAttribute)
 	}
 	chr := html.EscapeString(string(d.charset.DecodeByte(b)))
-	fgc := d.colors[fg].FG()
-	bgc := d.colors[bg].BG()
+	fgc := d.fgStyles[fg]
+	bgc := d.bgStyles[bg]
 	if d.Debug {
 		// debug wraps every character within its own span element
-		d.currentLine += template.HTML(`<span data-xy="` +
-			fmt.Sprintf("%dx%d", d.row, d.column) +
-			`" style="` + fgc + bgc + `">` + chr + `</span>`)
+		d.lineBuilder.WriteString(`<span data-xy="`)
+		d.lineBuilder.WriteString(strconv.Itoa(d.row))
+		d.lineBuilder.WriteString(`x`)
+		d.lineBuilder.WriteString(strconv.Itoa(d.column))
+		d.lineBuilder.WriteString(`" style="`)
+		d.lineBuilder.WriteString(fgc)
+		d.lineBuilder.WriteString(bgc)
+		d.lineBuilder.WriteString(`">`)
+		d.lineBuilder.WriteString(chr)
+		d.lineBuilder.WriteString(`</span>`)
 		return nil
 	}
 	// if the color attributes are identical to the colors used by the
@@ -327,27 +347,37 @@ func (d *Decoder) writeChar(b, atr byte) error {
 	// this should significantly reduce the size and node numbers of the
 	// final HTML snippet
 	if sameColors := d.column > 1 && d.currentAttr == atr; sameColors {
-		d.currentLine += template.HTML(chr)
+		d.lineBuilder.WriteString(chr)
 		return nil
 	}
 	if newline := d.column <= 1; newline {
-		d.currentLine += template.HTML(`<span style="` + fgc + bgc + `">` + chr)
+		d.lineBuilder.WriteString(`<span style="`)
+		d.lineBuilder.WriteString(fgc)
+		d.lineBuilder.WriteString(bgc)
+		d.lineBuilder.WriteString(`">`)
+		d.lineBuilder.WriteString(chr)
 		d.currentAttr = atr
 		return nil
 	}
 	// if colors have changed, we close the previous span element
 	// and create a new element with the new color attributes.
-	d.currentLine += template.HTML(`</span><span style="` + fgc + bgc + `">` + chr)
+	d.lineBuilder.WriteString(`</span><span style="`)
+	d.lineBuilder.WriteString(fgc)
+	d.lineBuilder.WriteString(bgc)
+	d.lineBuilder.WriteString(`">`)
+	d.lineBuilder.WriteString(chr)
 	d.currentAttr = atr
 	return nil
 }
 
 func (d *Decoder) writeRow() {
 	if !d.Debug {
-		d.currentLine += `</span>`
+		d.lineBuilder.WriteString(`</span>`)
 	}
-	d.buffer = append(d.buffer, d.currentLine+"\n")
-	d.currentLine = ""
+	d.lineBuilder.WriteString("\n")
+	//nolint:gosec
+	d.buffer = append(d.buffer, template.HTML(d.lineBuilder.String()))
+	d.lineBuilder.Reset()
 	d.row++
 	d.column = 1
 }
