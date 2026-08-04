@@ -315,14 +315,14 @@ func (d *Decoder) endOfRow() bool {
 }
 
 func (d *Decoder) writeChar(b, atr byte) error {
-	const msg = "data is not a video binary dump"
+	const format = "data is not a video binary dump %X %s color, %d > 15: %w"
 	fg, bg := decodeAttr(atr)
 	const lastColor = 15
 	if fg > lastColor {
-		return fmt.Errorf("%s %X foreground color, %d > 15: %w", msg, fg, fg, ErrAttribute)
+		return fmt.Errorf(format, fg, "foreground", fg, ErrAttribute)
 	}
 	if bg > lastColor {
-		return fmt.Errorf("%s %X background color, %d > 15: %w", msg, bg, bg, ErrAttribute)
+		return fmt.Errorf(format, bg, "background", bg, ErrAttribute)
 	}
 	chr := html.EscapeString(string(d.charset.DecodeByte(b)))
 	fgc := d.fgStyles[fg]
