@@ -64,32 +64,6 @@ func ExampleWriteTo() {
 	// "<div><span style=\"color:#000;background-color:#000;\">A</span><span style=\"color:#555;background-color:#000;\">B</span>\n</div>"
 }
 
-// func TestBuffer_Open(t *testing.T) {
-// 	t.Parallel()
-// 	file, err := os.Open("testdata/file.bin")
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	defer file.Close()
-//
-// 	buf, err := binbump.Buffer(
-// 		file, 80, 25, binbump.StandardCGA, nil)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-//
-// 	f, err := os.OpenFile("test.html", os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	defer f.Close()
-// 	n, err := io.Copy(f, buf)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	fmt.Println("wrote", n, "bytes to test.html")
-// }
-
 // Error path tests: ErrReader
 
 func TestBuffer_ErrReader(t *testing.T) {

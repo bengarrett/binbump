@@ -1,6 +1,6 @@
 module github.com/bengarrett/binbump
 
-go 1.26.2
+go 1.26.5
 
 require golang.org/x/text v0.40.0
 

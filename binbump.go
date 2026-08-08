@@ -10,8 +10,6 @@ import (
 	"html"
 	"html/template"
 	"io"
-	"os"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -152,9 +150,7 @@ func NewDecoder(width, maxRows int, pal Palette, charset *charmap.Charmap) *Deco
 		bufferCapacity = maxRows
 	}
 	d.buffer = make([]template.HTML, 0, bufferCapacity)
-	switch pal {
-	case StandardCGA:
-		d.colors = CGA()
+	switch pal { //nolint:exhaustive
 	case RevisedCGA:
 		d.colors = CGARevised()
 	default:
@@ -176,22 +172,18 @@ func Buffer(r io.Reader, width, maxRows int, pal Palette, charset *charmap.Charm
 	if r == nil {
 		return nil, ErrReader
 	}
-	if charset == nil {
-		charset = charmap.CodePage437
-	}
+
 	d := NewDecoder(width, maxRows, pal, charset)
 	if err := d.Read(r); err != nil {
 		return nil, err
 	}
-	var b bytes.Buffer
-	out := bufio.NewWriter(&b)
-	if err := d.Write(out); err != nil {
+
+	wr := new(bytes.Buffer)
+	if err := d.Write(wr); err != nil {
 		return nil, err
 	}
-	if err := out.Flush(); err != nil {
-		return nil, fmt.Errorf("buffer out flush: %w", err)
-	}
-	return &b, nil
+
+	return wr, nil
 }
 
 // Bytes returns the HTML elements of the binary dump found in the Reader.
@@ -216,117 +208,131 @@ func String(r io.Reader) (string, error) {
 
 // WriteTo writes to w the HTML elements of the binary dump found in the Reader.
 // It assumes the Reader is using IBM Code Page 437 encoding.
-// If width is <= 0, an 80 columns value is used.
 //
 // The return int64 is the number of bytes written.
 func WriteTo(r io.Reader, w io.Writer) (int64, error) {
+	const format = "buffer write to: %w"
+
 	buf, err := Buffer(r, 0, 0, StandardCGA, nil)
 	if err != nil {
 		return 0, err
 	}
-	i, err := buf.WriteTo(w)
+
+	n, err := buf.WriteTo(w)
 	if err != nil {
-		return 0, fmt.Errorf("buffer write to: %w", err)
+		return 0, fmt.Errorf(format, err)
 	}
-	return i, nil
+	return n, nil
 }
 
 // Write writes to w the full HTML fragment with outer div and inner lines joined with newlines.
 func (d *Decoder) Write(wr io.Writer) error {
+	const format = "write template execute: %w"
 	if wr == nil {
 		wr = io.Discard
 	}
+	total := 0
+	for _, s := range d.buffer {
+		total += len(s)
+	}
+
 	var sb strings.Builder
-	for s := range slices.Values(d.buffer) {
+	sb.Grow(total)
+
+	for _, s := range d.buffer {
 		sb.WriteString(string(s))
 	}
+
 	//nolint:gosec
 	data := template.HTML(sb.String())
-	if err := dumpTemplate.ExecuteTemplate(wr, "T", data); err != nil {
-		return fmt.Errorf("write template execute: %w", err)
+	const name = "T"
+	if err := dumpTemplate.ExecuteTemplate(wr, name, data); err != nil {
+		return fmt.Errorf(format, err)
 	}
 	return nil
 }
 
 // Read reads each pair of bytes from r and interprets the color sequences, updating the buffer.
-func (d *Decoder) Read(r io.Reader) error {
-	scanner := bufio.NewScanner(r)
-	const maxBuf = 64 * 1024
-	buf := make([]byte, maxBuf)
-	scanner.Buffer(buf, maxBuf)
-	scanner.Split(splitTwoBytes)
-	for scanner.Scan() {
-		tok := scanner.Bytes()
-		chr := tok[0]
-		atr := tok[1]
+func (d *Decoder) Read(r io.Reader) error { //nolint:cyclop
+	const format = "decoder read: %w"
+	br := bufio.NewReader(r)
+	const size = 2
+	buf := make([]byte, size)
+
+	for {
+		_, err := io.ReadFull(br, buf)
+		if err != nil {
+			if err == io.EOF {
+				break // normal end of stream
+			}
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				break // corrupted tail, such as an odd number of bytes
+			}
+			return fmt.Errorf(format, err)
+		}
+
+		chr := buf[0]
+		atr := buf[1]
 		if err := d.writeChar(chr, atr); err != nil {
 			return err
 		}
+
 		if d.endOfRow() {
 			d.writeRow()
 			continue
 		}
+
 		d.column++
-		if maxStop := d.maxRows > 0 && d.row > d.maxRows; maxStop {
+		if d.maxRows > 0 && d.row > d.maxRows {
 			break
 		}
 	}
-	// edge case, for handling tests or partially corrupted data dumps
 	if d.maxRows == 0 && d.column != 1 {
 		d.writeRow()
 	}
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintln(os.Stderr, "scan error:", err)
-	}
-	return nil
-}
 
-func splitTwoBytes(data []byte, atEOF bool) (int, []byte, error) {
-	const advance = 2
-	// return the two bytes as a color and character attribute token
-	if len(data) >= advance {
-		return advance, data[:2], nil
-	}
-	// if at EOF and there are leftover bytes, we discard them
-	// as the token reader always expects two bytes.
-	if atEOF {
-		return 0, nil, bufio.ErrFinalToken
-	}
-	// request more data
-	return 0, nil, nil
+	return nil
 }
 
 // decodeAttr returns the foreground and background
 // colors that are an int between 0 and 15.
-//
-//nolint:mnd
 func decodeAttr(b byte) (uint8, uint8) {
-	fgLow := b & 0x07        // bits 0-2
-	fgInt := (b >> 3) & 0x01 // bit 3
-	bg := (b >> 4) & 0x07    // bits 4-6
+	const colors = 0x07
+	const intensity = 0x01
+	const shiftInt = 3
+	const shiftCol = 4
+	fgLow := b & colors                  // bits 0-2
+	fgInt := (b >> shiftInt) & intensity // bit 3
+	bg := (b >> shiftCol) & colors       // bits 4-6
 	// blink := (b>>7)&0x01 == 1  // bit 7
-	fg := fgLow | (fgInt << 3) // 0..15
+	fg := fgLow | (fgInt << shiftInt) // 0..15
 	return fg, bg
 }
 
 func (d *Decoder) endOfRow() bool {
-	n := d.column
-	return n > 0 && n%d.columns == 0
+	return d.column >= d.columns
+	// n := d.column
+	// return n > 0 && n%d.columns == 0
 }
 
 func (d *Decoder) writeChar(b, atr byte) error {
 	const format = "data is not a video binary dump %X %s color, %d > 15: %w"
-	fg, bg := decodeAttr(atr)
 	const lastColor = 15
+
+	fg, bg := decodeAttr(atr)
+
+	// Safety check (assumes fg/bg are unsigned integers so they can't be negative)
 	if fg > lastColor {
 		return fmt.Errorf(format, fg, "foreground", fg, ErrAttribute)
 	}
 	if bg > lastColor {
 		return fmt.Errorf(format, bg, "background", bg, ErrAttribute)
 	}
+
 	chr := html.EscapeString(string(d.charset.DecodeByte(b)))
 	fgc := d.fgStyles[fg]
 	bgc := d.bgStyles[bg]
+
 	if d.Debug {
 		// debug wraps every character within its own span element
 		d.lineBuilder.WriteString(`<span data-xy="`)
@@ -341,16 +347,16 @@ func (d *Decoder) writeChar(b, atr byte) error {
 		d.lineBuilder.WriteString(`</span>`)
 		return nil
 	}
-	// if the color attributes are identical to the colors used by the
-	// previous character, then the character will be appended to the
-	// span text content.
-	// this should significantly reduce the size and node numbers of the
-	// final HTML snippet
-	if sameColors := d.column > 1 && d.currentAttr == atr; sameColors {
+
+	// If the color attributes are identical to the previous character,
+	// append the character to the current span.
+	if d.column > 1 && d.currentAttr == atr {
 		d.lineBuilder.WriteString(chr)
 		return nil
 	}
-	if newline := d.column <= 1; newline {
+
+	// Start of a new row: open the first span
+	if d.column <= 1 {
 		d.lineBuilder.WriteString(`<span style="`)
 		d.lineBuilder.WriteString(fgc)
 		d.lineBuilder.WriteString(bgc)
@@ -359,19 +365,20 @@ func (d *Decoder) writeChar(b, atr byte) error {
 		d.currentAttr = atr
 		return nil
 	}
-	// if colors have changed, we close the previous span element
-	// and create a new element with the new color attributes.
+
+	// Colors have changed mid-row: close the previous span and open a new one
 	d.lineBuilder.WriteString(`</span><span style="`)
 	d.lineBuilder.WriteString(fgc)
 	d.lineBuilder.WriteString(bgc)
 	d.lineBuilder.WriteString(`">`)
 	d.lineBuilder.WriteString(chr)
 	d.currentAttr = atr
+
 	return nil
 }
 
 func (d *Decoder) writeRow() {
-	if !d.Debug {
+	if !d.Debug && d.column > 1 {
 		d.lineBuilder.WriteString(`</span>`)
 	}
 	d.lineBuilder.WriteString("\n")

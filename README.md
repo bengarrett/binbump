@@ -1,9 +1,8 @@
 # BINbump
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/bengarrett/binbump.svg)](https://pkg.go.dev/github.com/bengarrett/binbump)
-[![Go Report Card](https://goreportcard.com/badge/github.com/bengarrett/binbump)](https://goreportcard.com/report/github.com/bengarrett/binbump)
 
-BINbump converts binary screen dumps of the IBM PC graphic and BIOS text mode characters, and CGA, EGA, and VGA colors 
+BINbump converts binary screen dumps of the IBM PC graphic and BIOS text mode characters, and CGA, EGA, and VGA colors
 into a HTML fragment for use in a template or webpage.
 
 See the [reference documentation](https://pkg.go.dev/github.com/bengarrett/binbump) for usage, and examples, including changing the character sets and the color palette.
@@ -32,10 +31,11 @@ func main() {
 #### HTML
 
 BINbump will output a [`<div>`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/div) "content division" element containing colors, styles, newlines, and text.
+
 - The div element should be used within a [`<pre>`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/pre) "preformatted text" element.
-- Most ANSI text will want a custom monospaced font, [Cascadia Mono](https://github.com/microsoft/cascadia-code) handles all the [CodePage 437](https://en.wikipedia.org/wiki/Code_page_437) characters. 
+- Most ANSI text will want a custom monospaced font, [Cascadia Mono](https://github.com/microsoft/cascadia-code) handles all the [CodePage 437](https://en.wikipedia.org/wiki/Code_page_437) characters.
 - Or use the [IBM VGA font](https://int10h.org/oldschool-pc-fonts/fontlist/font?ibm_vga_8x16) for a more authentic recreation,
- either font will require a CSS [`@font-face`](https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face) rule and [`font-family`](https://developer.mozilla.org/en-US/docs/Web/CSS/font-family) property.
+  either font will require a CSS [`@font-face`](https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face) rule and [`font-family`](https://developer.mozilla.org/en-US/docs/Web/CSS/font-family) property.
 
 ```html
 <html>
@@ -45,7 +45,7 @@ BINbump will output a [`<div>`](https://developer.mozilla.org/en-US/docs/Web/HTM
   <style>
     @font-face {
       font-family: cascadia-mono;
-      src: url(CascadiaMono.woff2) format("woff2");
+      src: url(CascadiaMono.woff2) format('woff2');
     }
     pre {
       font-family: cascadia-mono, monospace, serif;
@@ -71,5 +71,3 @@ BINbump doesn't parse any SAUCE metadata, however this can be done with a separa
 - [Deark](https://github.com/jsummers/deark) is a utility that can output BIN to HTML or an image.
 - [Ansilove](https://github.com/ansilove) is a collection of tools to convert BIN to images.
 - [Ultimate Oldschool PC Font Pack](https://int10h.org/oldschool-pc-fonts/) offers various retro DOS and PC fonts.
-
-
