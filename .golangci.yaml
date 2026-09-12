@@ -2,15 +2,15 @@ version: '2'
 linters:
   default: all
   disable:
-    - depguard
-    - exhaustruct
     - funlen
-    - gomodguard
     - nlreturn
     - noinlineerr
     - varnamelen
-    - wsl
     - wsl_v5
+    # retired
+    - exhaustruct
+    - gomodguard
+    - wsl
   exclusions:
     generated: lax
     presets:
@@ -26,6 +26,15 @@ linters:
       - path: '(.+)_test\.go'
         linters:
           - lll
+  settings:
+    depguard:
+      rules:
+        main:
+          allow:
+            - $gostd
+            - 'golang.org/x/text'
+            - 'github.com/nalgeon/be'
+            - 'github.com/bengarrett/binbump'
 formatters:
   enable:
     - gci

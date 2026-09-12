@@ -1,5 +1,7 @@
 // Package binbump converts binary screen dumps of the IBM PC graphic and BIOS
 // text mode characters, and CGA, EGA, and VGA colors into a HTML representation.
+//
+//nolint:gochecknoglobals
 package binbump
 
 import (
@@ -19,10 +21,10 @@ import (
 var (
 	ErrAttribute = errors.New("attribute is not a 4-bit color value")
 	ErrReader    = errors.New("reader is nil")
-	//nolint:gochecknoglobals
-	dumpTemplate = template.Must(template.New("dump").Parse(
-		`{{define "T"}}<div>{{ . }}</div>{{end}}`))
 )
+
+var dumpTemplate = template.Must(template.New("dump").Parse(
+	`{{define "T"}}<div>{{ . }}</div>{{end}}`))
 
 // Palette sets the 4-bit (0-15) color codes to a colorset of RGB values.
 type Palette uint
@@ -135,7 +137,8 @@ func NewDecoder(width, maxRows int, pal Palette, charset *charmap.Charmap) *Deco
 	if charset == nil {
 		charset = charmap.CodePage437
 	}
-	d := &Decoder{
+
+	d := &Decoder{ //nolint:exhaustruct_v5
 		charset:     charset,
 		columns:     width,
 		column:      1,
@@ -143,6 +146,7 @@ func NewDecoder(width, maxRows int, pal Palette, charset *charmap.Charmap) *Deco
 		maxRows:     0,
 		lineBuilder: &strings.Builder{},
 	}
+
 	// Pre-allocate buffer for typical screen sizes (25-30 rows)
 	bufferCapacity := 25
 	if maxRows > 0 {
@@ -150,17 +154,20 @@ func NewDecoder(width, maxRows int, pal Palette, charset *charmap.Charmap) *Deco
 		bufferCapacity = maxRows
 	}
 	d.buffer = make([]template.HTML, 0, bufferCapacity)
+
 	switch pal { //nolint:exhaustive
 	case RevisedCGA:
 		d.colors = CGARevised()
 	default:
 		d.colors = CGA()
 	}
+
 	// Pre-cache CSS style strings
 	for i := range 16 {
 		d.fgStyles[i] = d.colors[i].FG()
 		d.bgStyles[i] = d.colors[i].BG()
 	}
+
 	return d
 }
 
@@ -301,11 +308,12 @@ func decodeAttr(b byte) (uint8, uint8) {
 	const intensity = 0x01
 	const shiftInt = 3
 	const shiftCol = 4
+
 	fgLow := b & colors                  // bits 0-2
 	fgInt := (b >> shiftInt) & intensity // bit 3
 	bg := (b >> shiftCol) & colors       // bits 4-6
-	// blink := (b>>7)&0x01 == 1  // bit 7
-	fg := fgLow | (fgInt << shiftInt) // 0..15
+	fg := fgLow | (fgInt << shiftInt)    // 0..15
+
 	return fg, bg
 }
 
